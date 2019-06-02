@@ -1,0 +1,838 @@
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 1.
+Hexadecimal [24-Bits]
+
+
+
+                                      1 ; FUJI INSTAX BACK MCU ASSEMBLY CODE
+                                      2 ; INTEL 8052 INSTRUCTIONS
+                                      3 ; DESIGNED FOR STC8F2K08 MCU CHIP
+                                      4 ; ASSEMBLE USING SDAS8051 ASSEMBLER
+                                      5 ; ZENING LU
+                                      6 ; MAY 4, 2019
+                                      7 ; CHIP: STC8F2K08S2
+                                      8 ; FREQ: 4MHz
+                                      9 .MODULE INSTAX_BACK
+                                     10 ; STC51 REGISTERS
+                           00008E    11 AUXR	.EQU	0x8E
+                           0000D7    12 T2L		.EQU	0xD7
+                           0000D6    13 T2H		.EQU	0xD6
+                           0000E8    14 P4	.EQU	0xE8
+                           0000E8    15 P4_0	.EQU	0xE8
+                           0000C8    16 P5	.EQU	0xC8
+                           0000CC    17 P5.4	.EQU	0xCC
+                           000092    18 P1M0	.EQU	0x92
+                           000091    19 P1M1	.EQU	0x91
+                           000096    20 P2M0	.EQU	0x96
+                           000095    21 P2M1	.EQU	0x95
+                           0000B2    22 P3M0	.EQU	0xB2
+                           0000B1    23 P3M1	.EQU	0xB1
+                           0000CA    24 P5M0	.EQU	0xCA
+                           0000C9    25 P5M1	.EQU	0xC9
+                           0000C2    26 IAP_DATA    .EQU    0xC2
+                           0000C3    27 IAP_ADDRH   .EQU    0xC3
+                           0000C4    28 IAP_ADDRL   .EQU    0xC4
+                           0000C5    29 IAP_CMD     .EQU    0xC5
+                           0000C6    30 IAP_TRIG    .EQU    0xC6
+                           0000C7    31 IAP_CONTR   .EQU    0xC7
+                           000084    32 WT_4M       .EQU    0x84
+                           0000BB    33 VOCTRL		.EQU	0xBB
+                           0000FF    34 RSTCFG		.EQU	0xFF
+                           000040    35 ENLVR		.EQU	0x40
+                           000020    36 LVDF		.EQU	0x20	; PCON.5
+                           0000AE    37 ELVD		.EQU	IE+6
+                                     38 ; GPIO PLANS
+                           0000B2    39 KEY .EQU P3.2
+                           0000CC    40 ROLLER .EQU P5.4 ; HIGH effective
+                           000095    41 AP .EQU P1.5
+                           000094    42 AN .EQU P1.4
+                           000097    43 BP .EQU P1.7
+                           000096    44 BN .EQU P1.6
+                           000092    45 SEG_A .EQU P1.2
+                           000091    46 SEG_B .EQU P1.1
+                           000090    47 SEG_C .EQU P1.0
+                           0000B7    48 SEG_D .EQU P3.7
+                           0000B4    49 SEG_E .EQU P3.4
+                           0000B6    50 SEG_F .EQU P3.6 ; Common Anode
+                           0000B5    51 SEG_G .EQU P3.5
+                                     52 
+                                     53 ; GLOBAL CONSTANTS
+                           000005    54 LEN_OP .EQU 0d05
+                           000064    55 ROLLER_DURATION .EQU 0d100 ; x 100ms
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 2.
+Hexadecimal [24-Bits]
+
+
+
+                           000014    56 STEPS_PER_ROUND .EQU 0d20
+                           000064    57 STEPPER_GEAR_RATIO .EQU 0d100;
+                           0007D0    58 STEPPER_STEPS_INIT .EQU STEPS_PER_ROUND * STEPPER_GEAR_RATIO
+                           000014    59 STEPPER_CALI_STEPLEN .EQU STEPS_PER_ROUND * STEPPER_GEAR_RATIO / 100
+                                     60 
+                                     61 .area SAVEDVAR (ABS, DATA)
+                           00007F    62 FILM_CNT .EQU 0x7F ; film counter 0-9
+                           00007D    63 STEP_CNT .EQU 0x7D ; stepper steps countdown 2 bytes BIG ENDIAN
+                           00007C    64 STEP_DIR .EQU 0x7C ; direction -1:backward 1: forward
+                           00007B    65 STEP_STATE .EQU 0x7B ; 0: AB,1:A-B ,2:A-B-,3:AB- 4-cycle driving
+                           00007A    66 STEPPER_ROLLBACK .EQU 0x7A ; 0: forward 1: backward
+                           000079    67 ROLLER_CNT .EQU 0x79	; Roller remain count 2 bytes BIG ENDIAN
+                                     68 ; TODO: modify STEPPER_STEPS usages
+                           000077    69 STEPPER_STEPS	.EQU	0x77	; 2 Bytes 0x77-0x78
+                           000070    70 SAVE_VALID .EQU 0x70 ; 0: invalid saved data, 1: valid saved data
+                           000070    71 BEGIN_SAVED_VAR	.EQU	0x70 ; the initial address of SAVED VAR 
+                           000003    72 LVD3V0	.EQU	0x03
+                                     73 
+                                     74 .area GLOBALVAR (ABS, DATA)
+                           00006F    75 IDLE_PERIOD .EQU 0x6F ; record how many ticks the key has not been pressed
+                           00006E    76 KEY_PERIOD .EQU 0x6E ; execute and reset key history with KEY_PERIOD overflows (>2s)
+                           00006D    77 KEY_STATE .EQU 0x6D ; key state machine: state number 0: init 1: hold 2: transit 3: process
+                           00006C    78 KEY_HLD_CNT .EQU 0x6C ; key hold time counter
+                           00006B    79 KEY_RLS_CNT .EQU 0x6B ; key release time counter
+                           00006A    80 KEY_N_RECORD .EQU 0x6A ; number of historical key records
+                           000065    81 KEY_HISTORY .EQU  0x65 ; 0x65-0x69 BYTE[5]
+                           000008    82 LEN_BUF_UART	.EQU	8	; UART Buffer Length
+                           00005D    83 BUF_UART1	.EQU 0x5D ; UART1 RECV BUFFER 8 bytes
+                           00005C    84 WPTR_UART1	.EQU 0X5C ; Write Pointer
+                           00005B    85 RPTR_UART1	.EQU 0x5B	; Read Pointer
+                           000059    86 STEPPER_STEPS_CALIB .EQU 0x59 ; 2 Bytes 0x59-0x5A
+                           000001    87 IS_CALIB .EQU 0x01		; calibrating flag BIT
+                           000000    88 BUSY_UART1	.EQU 0x00	; UART1 BUSY flag BIT
+                           00002F    89 SEG_PATTERN .EQU 0x2F
+                                     90 
+                                     91 .area MAINCODE (ABS, CODE)
+      000000                         92 .ORG 0x00 ;START POINT
+      000000 02 00 D3         [24]   93 		LJMP SETUP
+      000003                         94 .ORG 0x03 ;INT0 INTERRUPT
+      000003 02 04 56         [24]   95 		LJMP INTERRUPT_KEY
+      00000B                         96 .ORG 0x0B ;TIMER0 INTERRUPT
+      00000B 02 01 8E         [24]   97 		LJMP INTERRUPT_T0
+      00001B                         98 .ORG 0x1B ;TIMER1 INTERRUPT
+      00001B 02 02 A7         [24]   99 		LJMP INTERRUPT_T1
+      000023                        100 .ORG 0x23 ; UART1 INTERRUPT
+      000023 02 03 0E         [24]  101 		LJMP INTERRUPT_UART1
+      000033                        102 .ORG 0x33 ; LOW VOLTAGE INTERRUPT
+      000033 02 04 57         [24]  103 		LJMP INTERRUPT_LVD
+      0000D3                        104 .ORG 0xD3 ;SETUP AND MAIN
+      0000D3                        105 SETUP:
+      0000D3 75 81 2F         [24]  106 		MOV SP, #0x2F ; Redirect Stack Pointer 
+      0000D6 C2 AF            [12]  107 		CLR EA
+                                    108 		; Init IO Modes
+      0000D8 C2 CC            [12]  109 		CLR P5.4 ; Pull down the motor driver 
+      0000DA 75 CA 10         [24]  110 		MOV P5M0, #0x10
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 3.
+Hexadecimal [24-Bits]
+
+
+
+      0000DD 75 C9 00         [24]  111 		MOV P5M1, #0x00 ; P5 Strong Pull-up
+      0000E0 75 92 00         [24]  112 		MOV P1M0, #0x00
+      0000E3 75 91 00         [24]  113 		MOV P1M1, #0x00 ; P1 Weak Pull-up
+      0000E6 75 B2 00         [24]  114 		MOV P3M0, #0x00
+      0000E9 75 B1 00         [24]  115 		MOV P3M1, #0x00 ; P3 Weak Pull-up
+      0000EC 75 90 FF         [24]  116 		MOV P1, #0xff
+      0000EF 75 B0 FF         [24]  117 		MOV P3, #0xff
+                                    118 		; INIT Register settings
+                                    119 		; Init Global Variables
+      0000F2 12 04 F1         [24]  120 		LCALL READ_DATA
+      0000F5 E5 70            [12]  121 		MOV A, SAVE_VALID
+      0000F7 B4 AA 02         [24]  122 		CJNE A, #0xAA, VAR_INIT ; init variable if SAVE_VALID != 0xAA
+      0000FA 80 3C            [24]  123 		SJMP NOT_VAR_INIT
+      0000FC                        124 	VAR_INIT:
+      0000FC 75 6F 00         [24]  125 		MOV IDLE_PERIOD, #0
+      0000FF 75 6E 00         [24]  126 		MOV KEY_PERIOD, #0
+      000102 75 6D 00         [24]  127 		MOV KEY_STATE, #0
+      000105 75 6C 00         [24]  128 		MOV KEY_HLD_CNT, #0
+      000108 75 6B 00         [24]  129 		MOV KEY_RLS_CNT, #0
+      00010B 75 6A 00         [24]  130 		MOV KEY_N_RECORD, #0
+                                    131 		; Init KEY_HISTORY array
+      00010E 78 65            [12]  132 		MOV R0, #KEY_HISTORY
+      000110 79 05            [12]  133 		MOV R1, #5
+      000112                        134 	1$: ;For i = 1 to 5
+      000112 76 00            [12]  135 		MOV @R0, #0
+      000114 08               [12]  136 		INC R0
+      000115 D9 FB            [24]  137 		DJNZ R1, 1$
+                                    138 		;Next i
+      000117 75 7F 00         [24]  139 		MOV FILM_CNT, #0
+      00011A 75 7F 00         [24]  140 		MOV FILM_CNT,	#0
+      00011D 75 7D 00         [24]  141 		MOV STEP_CNT, #0
+      000120 75 7E 00         [24]  142 		MOV STEP_CNT+1, #0
+      000123 75 7C 01         [24]  143 		MOV STEP_DIR, #1
+      000126 75 7B 00         [24]  144 		MOV STEP_STATE, #0
+      000129 75 7A 00         [24]  145 		MOV STEPPER_ROLLBACK, #0
+      00012C 75 78 D0         [24]  146 		MOV STEPPER_STEPS+1, #<STEPPER_STEPS_INIT
+      00012F 75 77 07         [24]  147 		MOV STEPPER_STEPS, #>STEPPER_STEPS_INIT
+      000132 75 79 00         [24]  148 		MOV ROLLER_CNT, #0
+      000135 75 70 AA         [24]  149 		MOV SAVE_VALID, #0xAA
+      000138                        150 NOT_VAR_INIT:
+                                    151 		; Init Timer 0 to be the main scheduler ticking at 100ms
+      000138 12 01 59         [24]  152 		LCALL INIT_T0
+      00013B D2 8C            [12]  153 		SETB TR0		
+      00013D 12 01 66         [24]  154 		LCALL INIT_T1
+      000140 C2 8E            [12]  155 		CLR TR1
+                                    156 		; Enable interrupts
+      000142 D2 A9            [12]  157 		SETB ET0
+      000144 C2 A8            [12]  158 		CLR EX0 ; stop responding to the key 
+      000146 D2 88            [12]  159 		SETB IT0 ; falling edge interrupt
+                                    160 		; CLEAR LVD FLAG
+      000148 53 87 DF         [24]  161 		ANL PCON, #~LVDF 
+      00014B 75 FF 03         [24]  162 		MOV RSTCFG, #0x03 ; trigger LVD at 3.0V
+      00014E E5 7F            [12]  163 		MOV A, FILM_CNT
+      000150 12 03 DD         [24]  164 		LCALL UPDATE_SEG_DISPLAY
+      000153 D2 AE            [12]  165 		SETB ELVD
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 4.
+Hexadecimal [24-Bits]
+
+
+
+      000155 D2 AF            [12]  166 		SETB EA
+                                    167 
+                                    168 		
+      000157                        169 MAIN:
+      000157 80 FE            [24]  170 		SJMP .; MAIN LOOP
+                                    171 
+      000159                        172 INIT_T0:
+      000159 53 8E 7F         [24]  173 		ANL AUXR,#0x7F		
+      00015C 53 89 F0         [24]  174 		ANL TMOD,#0xF0		
+      00015F 75 8A CB         [24]  175 		MOV TL0,#0xCB		
+      000162 75 8C 7D         [24]  176 		MOV TH0,#0x7D		
+      000165 22               [24]  177 		RET
+                                    178 
+      000166                        179 INIT_T1: ; initialize stepper motor timer 0.5ms
+      000166 53 8E BF         [24]  180 		ANL AUXR,#0xBF		
+      000169 53 89 0F         [24]  181 		ANL TMOD,#0x0F		
+      00016C 75 8B 59         [24]  182 		MOV TL1,#0x59		
+      00016F 75 8D FF         [24]  183 		MOV TH1,#0xFF		
+      000172 C2 8F            [12]  184 		CLR TF1			
+      000174 22               [24]  185 		RET
+                                    186 
+      000175                        187 INIT_UART1:	; UART1@9600bps generating T2 
+      000175 75 5C 00         [24]  188 		MOV WPTR_UART1, #0
+      000178 75 5B 00         [24]  189 		MOV RPTR_UART1, #0
+      00017B 75 98 50         [24]  190 		MOV SCON,#0x50		
+      00017E 43 8E 01         [24]  191 		ORL AUXR,#0x01
+      000181 43 8E 04         [24]  192 		ORL AUXR,#0x04
+      000184 75 D7 98         [24]  193 		MOV T2L,#0x98
+      000187 75 D6 FF         [24]  194 		MOV T2H,#0xff		
+      00018A 43 8E 10         [24]  195 		ORL AUXR,#0x10		
+      00018D 22               [24]  196 		RET
+                                    197 		
+                                    198 
+      00018E                        199 INTERRUPT_T0:
+      00018E C0 E0            [24]  200 		PUSH ACC
+      000190 C0 D0            [24]  201 		PUSH PSW
+      000192 C0 82            [24]  202 		PUSH DPL
+      000194 C0 83            [24]  203 		PUSH DPH
+      000196 75 D0 08         [24]  204 		MOV PSW, #0x08; Using register group 1
+      000199 90 05 1F         [24]  205 		MOV DPTR, #STR_TICK0
+      00019C 12 03 B4         [24]  206 		LCALL SENDSTR_UART1 
+                                    207 ; ROLLER PROCESS
+      00019F E5 79            [12]  208 		MOV A, ROLLER_CNT
+      0001A1 60 05            [24]  209 		JZ IDLE_PROCESS
+      0001A3 15 79            [12]  210 		DEC ROLLER_CNT
+      0001A5 02 02 6F         [24]  211 		LJMP INT_T0_DONE
+      0001A8                        212 IDLE_PROCESS:
+      0001A8 C2 CC            [12]  213 		CLR ROLLER ; stop roller
+      0001AA 30 01 03         [24]  214 		JNB IS_CALIB, 1$ ; Exit if is calibrating
+      0001AD 02 02 6F         [24]  215 		LJMP INT_T0_DONE
+      0001B0                        216 	1$:
+      0001B0 E5 6F            [12]  217 		MOV A, IDLE_PERIOD
+      0001B2 B4 64 06         [24]  218 		CJNE A, #100, KEY_PROCESS
+      0001B5 75 6F 00         [24]  219 		MOV IDLE_PERIOD, #0
+      0001B8 12 04 30         [24]  220 		LCALL POWER_DOWN
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 5.
+Hexadecimal [24-Bits]
+
+
+
+      0001BB                        221 KEY_PROCESS:
+                                    222 		; process key press
+      0001BB E5 6D            [12]  223 		MOV A, KEY_STATE
+      0001BD 60 09            [24]  224 		JZ KEY_STATE0
+      0001BF 14               [12]  225 		DEC A
+      0001C0 60 59            [24]  226 		JZ KEY_STATE1
+      0001C2 14               [12]  227 		DEC A
+      0001C3 60 64            [24]  228 		JZ KEY_STATE2
+      0001C5 14               [12]  229 		DEC A
+      0001C6 60 73            [24]  230 		JZ KEY_STATE3
+      0001C8                        231 KEY_STATE0: ; INIT STATE
+      0001C8 30 B2 43         [24]  232 		JNB KEY, 1$; BRANCH IF THE KEY IS PRESSED
+                                    233 		; IF KEY_PERIOD > 10 execute 
+      0001CB E5 6E            [12]  234 		MOV A, KEY_PERIOD
+      0001CD B4 0A 38         [24]  235 		CJNE A, #10, 0$
+      0001D0 75 6E 00         [24]  236 		MOV KEY_PERIOD, #0
+                                    237 		; EXECUTE KEY HISTORY
+      0001D3 75 6E 00         [24]  238 		MOV KEY_PERIOD, #0 ; Clear KEY_PERIOD COUNTER
+      0001D6 E5 6A            [12]  239 		MOV A, KEY_N_RECORD
+      0001D8 60 2E            [24]  240 		JZ 0$; BRANCH IF KEY HISTORY IS VACANT
+                                    241 		; CHECK KEY HISTORY
+      0001DA 90 05 4D         [24]  242 		MOV DPTR, #KEYOP_TABLE ; LOAD ADDRESS OF KEY OPERATION CODE TABLE
+      0001DD 7A 00            [12]  243 		MOV R2, #0 ; KEY OP TABLE bias
+      0001DF 78 00            [12]  244 		MOV R0, #0 ; LOOP VAR i = 0 current key op code row
+      0001E1                        245 	2$: ; FOR LOOP, iterate through the key op codes
+      0001E1 E8               [12]  246 		MOV A, R0
+      0001E2 75 F0 05         [24]  247 		MOV B, #LEN_KEYOP
+      0001E5 A4               [48]  248 		MUL AB ; BA = A * LEN_KEYOP
+      0001E6 FA               [12]  249 		MOV R2, A ; key op table bias = LEN_OP * i
+      0001E7 79 65            [12]  250 		MOV R1, #KEY_HISTORY ; LOAD Addr OF KEY HISTORY
+      0001E9 AB 6A            [24]  251 		MOV R3, KEY_N_RECORD ; LOOP VAR j = 5 entires per op code
+      0001EB                        252 	3$: ;	FOR LOOP, iterate through 5 entries of the key op code
+      0001EB EA               [12]  253 		MOV A, R2
+      0001EC 93               [24]  254 		MOVC A, @A+DPTR ; load key op table entry
+      0001ED 97               [12]  255 		SUBB A, @R1 ; COMPARE TABLE ENTRY AND HISTORY ENTRY
+      0001EE 70 14            [24]  256 		JNZ 20$ ; CONTINUE to next row of table IF mismatch
+      0001F0 09               [12]  257 		INC R1 ; next history table entry
+      0001F1 0A               [12]  258 		INC R2 ; next op table entry
+      0001F2 DB F7            [24]  259 		DJNZ R3, 3$ ; NEXT j
+                                    260 		; FULL MATCH, load addr of Key OP handler Entry point
+      0001F4 90 05 5C         [24]  261 		MOV DPTR, #OP_ENT_PNTS
+      0001F7 E8               [12]  262 		MOV A, R0
+      0001F8 23               [12]  263 		RL A
+      0001F9 F8               [12]  264 		MOV R0, A
+      0001FA 93               [24]  265 		MOVC A, @A+DPTR ; READ Higher BYTE
+      0001FB C8               [12]  266 		XCH A,R0
+      0001FC 04               [12]  267 		INC A
+      0001FD 93               [24]  268 		MOVC A, @A+DPTR
+      0001FE 88 83            [24]  269 		MOV DPH, R0 ; READ Lower BYTE
+      000200 F5 82            [12]  270 		MOV DPL, A
+      000202 E4               [12]  271 		CLR A ; A = 0
+      000203 73               [24]  272 		JMP @A+DPTR ; Jump to the op handler entry point
+      000204                        273 	20$: ; NEXT i
+      000204 08               [12]  274 		INC R0
+      000205 B8 03 D9         [24]  275 		CJNE R0, #N_KEYOPS, 2$
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 6.
+Hexadecimal [24-Bits]
+
+
+
+      000208                        276 	0$: ; KEY EXECUTION PERIOD HAS NOT ARRIVED
+      000208 05 6E            [12]  277 		INC KEY_PERIOD ; 
+      00020A 05 6F            [12]  278 		INC IDLE_PERIOD ;
+      00020C 80 5E            [24]  279 		SJMP KEY_DONE
+      00020E                        280 	1$: ; KEY IS PRESSED
+      00020E 75 6E 00         [24]  281 		MOV KEY_PERIOD, #0
+      000211 75 6F 00         [24]  282 		MOV IDLE_PERIOD, #0
+      000214 05 6D            [12]  283 		INC KEY_STATE ; PROCEED IF THE KEY IS PRESSED
+      000216 75 6C 00         [24]  284 		MOV KEY_HLD_CNT, #0
+      000219 80 51            [24]  285 		SJMP KEY_DONE
+      00021B                        286 KEY_STATE1: ; HOLD STATE
+      00021B 20 B2 04         [24]  287 		JB KEY, 1$ ; BRANCH IF THE KEY IS RELEASED
+      00021E 05 6C            [12]  288 		INC KEY_HLD_CNT ; INCREMENT THE COUNTER IF THE KEY IS HOLD 
+      000220 80 4A            [24]  289 		SJMP KEY_DONE
+      000222                        290 	1$:
+      000222 05 6D            [12]  291 		INC KEY_STATE ; PROCEED TO STATE2 IF THE KEY IS RELEASED
+      000224 75 6B 00         [24]  292 		MOV KEY_RLS_CNT, #0
+      000227 80 43            [24]  293 		SJMP KEY_DONE
+      000229                        294 KEY_STATE2: ; TRANSITION STATE
+      000229 05 6B            [12]  295 		INC KEY_RLS_CNT
+      00022B 30 B2 09         [24]  296 		JNB KEY, 1$ ; BRANCHE IF THE KEY IS PRESSED
+                                    297 		; BRANCH IF KEY_RLS_CNT DOES NOT OVERFLOW
+      00022E E5 6B            [12]  298 		MOV A, KEY_RLS_CNT
+      000230 B4 10 39         [24]  299 		CJNE A, #0x10, KEY_DONE ; IF KEY_RLS_CNT < 10, stay
+                                    300 		; IF the Counter has overflowed, proceed to process state
+      000233 05 6D            [12]  301 		INC KEY_STATE
+      000235 80 35            [24]  302 		SJMP KEY_DONE
+      000237                        303 	1$:
+                                    304 		; KEY PRESSED
+      000237 15 6D            [12]  305 		DEC KEY_STATE ; Back to the previous state
+      000239 80 31            [24]  306 		SJMP KEY_DONE
+      00023B                        307 KEY_STATE3: ; PROCESS STATE
+      00023B A8 6C            [24]  308 		MOV R0, KEY_HLD_CNT
+      00023D 75 6C 00         [24]  309 		MOV KEY_HLD_CNT, #0 ; CLEAR KEY HLD CNT
+      000240 E5 6A            [12]  310 		MOV A, KEY_N_RECORD
+      000242 B4 05 02         [24]  311 		CJNE A, #LEN_OP, 1$ ; Branch if KEY HISTORY is not full
+      000245 80 22            [24]  312 		SJMP KEY_PROCESS_DONE ; quit if KEY HISTORY is full
+      000247                        313 	1$:
+      000247 E8               [12]  314 		MOV A, R0
+      000248 C3               [12]  315 		CLR C
+      000249 94 0A            [12]  316 		SUBB A, #10 ; KEY_HLD_CNT >= 1s
+      00024B 50 08            [24]  317 		JNC  LONG_KEY; BRANCH IF KEY_HLD_CNT >= 10
+      00024D E8               [12]  318 		MOV A, R0
+      00024E C3               [12]  319 		CLR C
+      00024F 94 01            [12]  320 		SUBB A, #1 ; KEY_HLD_CNT > 100ms
+      000251 50 0D            [24]  321 		JNC SHORT_KEY; BRANCH IF KEY_HLD_CNT == 1
+                                    322 		; OTHREWISE if KEY_HLD_CNT = 0
+      000253 80 14            [24]  323 		SJMP KEY_PROCESS_DONE
+      000255                        324 LONG_KEY:
+                                    325 		; PROCESS KEY
+      000255 74 65            [12]  326 		MOV A, #KEY_HISTORY
+      000257 25 6A            [12]  327 		ADD A, KEY_N_RECORD
+      000259 F8               [12]  328 		MOV R0, A
+      00025A 76 02            [12]  329 		MOV @R0, #2 ; RECORD LONG KEY
+      00025C 05 6A            [12]  330 		INC KEY_N_RECORD
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 7.
+Hexadecimal [24-Bits]
+
+
+
+      00025E 80 09            [24]  331 		SJMP KEY_PROCESS_DONE
+      000260                        332 SHORT_KEY:
+      000260 74 65            [12]  333 		MOV A, #KEY_HISTORY
+      000262 25 6A            [12]  334 		ADD A, KEY_N_RECORD
+      000264 F8               [12]  335 		MOV R0, A
+      000265 76 01            [12]  336 		MOV @R0, #1 ; RECORD LONG KEY
+      000267 05 6A            [12]  337 		INC KEY_N_RECORD
+      000269                        338 KEY_PROCESS_DONE: ; KEY PROCESS FINISHED
+      000269 75 6D 00         [24]  339 		MOV KEY_STATE, #0 ; Back to the initial state
+      00026C                        340 KEY_DONE:
+      00026C 02 02 6F         [24]  341 		LJMP INT_T0_DONE
+      00026F                        342 INT_T0_DONE:
+      00026F D0 83            [24]  343 		POP DPH
+      000271 D0 82            [24]  344 		POP DPL
+      000273 D0 D0            [24]  345 		POP PSW
+      000275 D0 E0            [24]  346 		POP ACC
+      000277 32               [24]  347 		RETI
+                                    348 
+      000278                        349 KEYOP0: ; . DISPLAY
+      000278 E5 7F            [12]  350 		MOV A, FILM_CNT
+      00027A 12 03 DD         [24]  351 		LCALL UPDATE_SEG_DISPLAY
+      00027D 02 02 6F         [24]  352 		LJMP INT_T0_DONE
+                                    353 
+      000280                        354 KEYOP1: ; - PRINT
+                                    355 		; START ROLLER
+      000280 E5 79            [12]  356 		MOV A, ROLLER_CNT
+      000282 70 1D            [24]  357 		JNZ 0$
+      000284 E5 7D            [12]  358 		MOV A, STEP_CNT
+      000286 45 7E            [12]  359 		ORL A, STEP_CNT+1
+      000288 70 17            [24]  360 		JNZ 0$
+                                    361 		; Start Roller
+      00028A 75 79 64         [24]  362 		MOV ROLLER_CNT, #ROLLER_DURATION
+      00028D D2 CC            [12]  363 		SETB ROLLER
+                                    364 		; Start stepper
+      00028F E5 77            [12]  365 		MOV A, STEPPER_STEPS
+      000291 F5 7D            [12]  366 		MOV STEP_CNT, A; Higher byte
+      000293 E5 78            [12]  367 		MOV A, STEPPER_STEPS+1
+      000295 F5 7E            [12]  368 		MOV STEP_CNT+1, A; Lower byte 
+      000297 12 03 CB         [24]  369 		LCALL ENABLE_STEPPER
+      00029A 05 7F            [12]  370 		INC FILM_CNT
+      00029C E5 7F            [12]  371 		MOV A, FILM_CNT
+      00029E 12 03 DD         [24]  372 		LCALL UPDATE_SEG_DISPLAY
+      0002A1                        373 	0$:
+      0002A1 02 02 6F         [24]  374 		LJMP INT_T0_DONE
+      0002A4                        375 KEYOP2:
+      0002A4 02 02 6F         [24]  376 		LJMP INT_T0_DONE
+                                    377 
+                                    378 
+      0002A7                        379 INTERRUPT_T1:
+      0002A7 C0 E0            [24]  380 		PUSH ACC
+      0002A9 C0 D0            [24]  381 		PUSH PSW
+      0002AB E5 7D            [12]  382 		MOV A, STEP_CNT
+      0002AD 45 7E            [12]  383 		ORL A, STEP_CNT+1
+      0002AF 70 12            [24]  384 		JNZ PROCEED_STEP; IF STEP_CNT != 0, PROCEED TO NEXT STEP
+                                    385 		; ELSE
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 8.
+Hexadecimal [24-Bits]
+
+
+
+      0002B1 E5 7A            [12]  386 		MOV A, STEPPER_ROLLBACK
+      0002B3 70 4F            [24]  387 		JNZ STEPPER_DONE ; if STEPPER_ROLLBACK == 1, quit
+                                    388 		; else rollback the stepper
+      0002B5 75 7D 00         [24]  389 		MOV STEP_CNT, #>STEPPER_STEPS
+      0002B8 75 7E 77         [24]  390 		MOV STEP_CNT+1, #<STEPPER_STEPS
+      0002BB 75 7A 01         [24]  391 		MOV STEPPER_ROLLBACK, #1
+      0002BE 63 7C FF         [24]  392 		XRL STEP_DIR, #0xff ; bitwise NOT
+      0002C1 05 7C            [12]  393 		INC STEP_DIR ;STEP_DIR = -STEP_DIR
+      0002C3                        394 PROCEED_STEP:
+                                    395 	; proceed to the next step
+      0002C3 E5 7B            [12]  396 		MOV A, STEP_STATE
+      0002C5 25 7C            [12]  397 		ADD A, STEP_DIR
+                                    398 		; if step_state < 0, step_step = 3
+      0002C7 30 E7 02         [24]  399 		JNB A.7, 5$
+      0002CA 74 03            [12]  400 		MOV A, #3
+      0002CC                        401 	5$: ; if step_state == 4, step_step = 0
+      0002CC B4 04 02         [24]  402 		CJNE A, #4, 6$
+      0002CF 74 00            [12]  403 		MOV A, #0
+      0002D1                        404 	6$:
+      0002D1 C2 95            [12]  405 		CLR AP
+      0002D3 C2 97            [12]  406 		CLR BP
+      0002D5 C2 94            [12]  407 		CLR AN
+      0002D7 C2 96            [12]  408 		CLR BN
+      0002D9 B4 00 04         [24]  409 		CJNE A, #0, 1$ ;AB
+      0002DC D2 95            [12]  410 		SETB AP
+      0002DE D2 97            [12]  411 		SETB BP
+      0002E0 B4 01 04         [24]  412 	1$: CJNE A, #1, 2$ ;A-B
+      0002E3 D2 94            [12]  413 		SETB AN
+      0002E5 D2 97            [12]  414 		SETB BP
+      0002E7 B4 02 04         [24]  415 	2$: CJNE A, #2, 3$ ;A-B-
+      0002EA D2 94            [12]  416 		SETB AN
+      0002EC D2 96            [12]  417 		SETB BN
+      0002EE B4 03 04         [24]  418 	3$: CJNE A, #3, 4$ ;AB-
+      0002F1 D2 95            [12]  419 		SETB AP
+      0002F3 D2 96            [12]  420 		SETB BN
+      0002F5                        421 	4$:
+      0002F5 F5 7B            [12]  422 		MOV STEP_STATE, A
+                                    423 		;DEC 2Bytes STEP_CNT
+      0002F7 C3               [12]  424 		CLR C
+      0002F8 E5 7E            [12]  425 		MOV A, STEP_CNT+1
+      0002FA 94 01            [12]  426 		SUBB A, #1
+      0002FC F5 7E            [12]  427 		MOV STEP_CNT+1, A
+      0002FE 50 02            [24]  428 		JNC 7$ 
+      000300 15 7D            [12]  429 		DEC STEP_CNT
+      000302                        430 	7$:
+      000302 80 05            [24]  431 		SJMP INT_T1_DONE
+      000304                        432 STEPPER_DONE:
+                                    433 		; quit and stop Timer 1
+      000304 C2 8E            [12]  434 		CLR TR1
+      000306 12 03 D0         [24]  435 		LCALL DISABLE_STEPPER
+      000309                        436 INT_T1_DONE:
+      000309 D0 D0            [24]  437 		POP PSW
+      00030B D0 E0            [24]  438 		POP ACC
+      00030D 32               [24]  439 		RETI
+                                    440 
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 9.
+Hexadecimal [24-Bits]
+
+
+
+      00030E                        441 INTERRUPT_UART1:
+      00030E C0 E0            [24]  442 		PUSH ACC
+      000310 C0 D0            [24]  443 		PUSH PSW
+                                    444 		; TODO: register group 2 PSW
+      000312 85 0C D0         [24]  445 		MOV PSW, 0x0C ; Using register group 2
+      000315 30 99 04         [24]  446 		JNB TI, RECV_UART1
+      000318 C2 99            [12]  447 		CLR TI
+      00031A C2 00            [12]  448 		CLR BUSY_UART1
+      00031C                        449 RECV_UART1:
+      00031C 30 98 1A         [24]  450 		JNB RI, UART1_DONE
+      00031F C2 98            [12]  451 		CLR RI
+      000321 E5 99            [12]  452 		MOV A, SBUF
+      000323 B4 0D 08         [24]  453 		CJNE A, #'\r', 0$	; Each command ends with \r, if so jump to command process routine
+                                    454 		; Command ends, process routine
+      000326 E5 5D            [12]  455 		MOV A, BUF_UART1
+      000328 12 03 3E         [24]  456 		LCALL PROC_COMM
+      00032B 75 5C 00         [24]  457 		MOV WPTR_UART1, #0
+      00032E                        458 	0$:
+      00032E E5 5C            [12]  459 		MOV A, WPTR_UART1
+      000330 54 0F            [12]  460 		ANL A, #0x0F
+      000332 24 5D            [12]  461 		ADD A, #BUF_UART1
+      000334 F8               [12]  462 		MOV R0, A
+      000335 A6 99            [24]  463 		MOV @R0, SBUF
+      000337 05 5C            [12]  464 		INC WPTR_UART1
+      000339                        465 UART1_DONE:
+      000339 D0 D0            [24]  466 		POP PSW
+      00033B D0 E0            [24]  467 		POP ACC
+      00033D 32               [24]  468 		RETI
+                                    469 
+      00033E                        470 PROC_COMM:	; INPUT: A, Process commands from UART 
+      00033E C0 83            [24]  471 		PUSH DPH
+      000340 C0 82            [24]  472 		PUSH DPL
+                                    473 		; comm = 'F'	Hock forward
+      000342 B4 46 0E         [24]  474 	1$:	CJNE A, #'F', 2$
+      000345 75 7C 01         [24]  475 		MOV STEP_DIR, #1
+      000348 75 7D 00         [24]  476 		MOV STEP_CNT, #0
+      00034B 75 7E 14         [24]  477 		MOV STEP_CNT+1, #STEPPER_CALI_STEPLEN
+      00034E 12 03 CB         [24]  478 		LCALL ENABLE_STEPPER
+      000351 80 4E            [24]  479 		SJMP PROC_UART1_DONE
+                                    480 		; comm = 'B'	Hock backward
+      000353 B4 42 0E         [24]  481 	2$: CJNE A, #'B', 3$
+      000356 75 7C FF         [24]  482 		MOV STEP_DIR, #-1
+      000359 75 7D 00         [24]  483 		MOV STEP_CNT, #0
+      00035C 75 7E 14         [24]  484 		MOV STEP_CNT+1, #STEPPER_CALI_STEPLEN
+      00035F 12 03 CB         [24]  485 		LCALL ENABLE_STEPPER
+      000362 80 3D            [24]  486 		SJMP PROC_UART1_DONE
+                                    487 		; comm = 'P'	Roller roll
+      000364 B4 50 07         [24]  488 	3$: CJNE A, #'P', 4$
+      000367 75 79 64         [24]  489 		MOV ROLLER_CNT, #ROLLER_DURATION
+      00036A D2 CC            [12]  490 		SETB ROLLER
+      00036C 80 33            [24]  491 		SJMP PROC_UART1_DONE
+                                    492 		; comm = 'L'	Calibrate
+      00036E B4 4C 0A         [24]  493 	4$:	CJNE A, #'L', 5$
+      000371 75 5A 00         [24]  494 		MOV STEPPER_STEPS_CALIB+1, #0
+      000374 75 59 00         [24]  495 		MOV STEPPER_STEPS_CALIB, #0
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 10.
+Hexadecimal [24-Bits]
+
+
+
+      000377 D2 01            [12]  496 		SETB IS_CALIB
+      000379 80 26            [24]  497 		SJMP PROC_UART1_DONE
+                                    498 		; comm = 'S'	Save calibrate
+      00037B B4 53 0F         [24]  499 	5$: CJNE A, #'S', 6$
+      00037E E5 59            [12]  500 		MOV A, STEPPER_STEPS_CALIB
+      000380 F5 7D            [12]  501 		MOV STEP_CNT, A
+      000382 E5 5A            [12]  502 		MOV A, STEPPER_STEPS_CALIB+1
+      000384 F5 7E            [12]  503 		MOV STEP_CNT+1, A
+      000386 12 04 C8         [24]  504 		LCALL SAVE_DATA
+      000389 C2 01            [12]  505 		CLR IS_CALIB
+      00038B 80 14            [24]  506 		SJMP PROC_UART1_DONE
+                                    507 		; comm = '0' - '9' set film counter
+      00038D                        508 	6$:	; if '0' <= A <= '9'
+      00038D C3               [12]  509 		CLR C
+      00038E 94 30            [12]  510 		SUBB A, #'0'
+      000390 40 09            [24]  511 		JC 10$ ; if A < '0', bad command
+      000392 F9               [12]  512 		MOV R1, A
+      000393 94 09            [12]  513 		SUBB A, #9
+      000395 50 04            [24]  514 		JNC 10$ ; if A > '9', bad command
+      000397 89 7F            [24]  515 		MOV FILM_CNT, R1
+      000399 80 06            [24]  516 		SJMP PROC_UART1_DONE
+      00039B                        517 	10$:; Bad command
+      00039B 90 05 29         [24]  518 		MOV DPTR, #STR_BADCOMM
+      00039E 12 03 B4         [24]  519 		LCALL SENDSTR_UART1
+      0003A1                        520 	PROC_UART1_DONE:
+      0003A1 90 05 1A         [24]  521 		MOV DPTR, #STR_OK
+      0003A4 12 03 B4         [24]  522 		LCALL SENDSTR_UART1
+      0003A7 D0 82            [24]  523 		POP DPL
+      0003A9 D0 83            [24]  524 		POP DPH
+      0003AB 22               [24]  525 		RET
+                                    526 
+      0003AC                        527 SEND_UART1:	; INPUT: ACC, OUTPUT: NONE
+      0003AC 20 00 FD         [24]  528 		JB BUSY_UART1, .
+      0003AF D2 00            [12]  529 		SETB BUSY_UART1
+      0003B1 F5 99            [12]  530 		MOV SBUF, A
+      0003B3 22               [24]  531 		RET
+                                    532 
+      0003B4                        533 SENDSTR_UART1: ; INPUT: DPTR Addr, ends with \0
+      0003B4 C0 E0            [24]  534 		PUSH ACC
+      0003B6 C0 83            [24]  535 		PUSH DPH
+      0003B8 C0 82            [24]  536 		PUSH DPL
+      0003BA                        537 	1$:
+      0003BA E4               [12]  538 		CLR A
+      0003BB 93               [24]  539 		MOVC A, @A+DPTR
+      0003BC 60 06            [24]  540 		JZ 0$
+      0003BE 12 03 AC         [24]  541 		LCALL SEND_UART1
+      0003C1 A3               [24]  542 		INC DPTR
+      0003C2 80 F6            [24]  543 		SJMP 1$
+      0003C4                        544 	0$:
+      0003C4 D0 82            [24]  545 		POP DPL
+      0003C6 D0 83            [24]  546 		POP DPH
+      0003C8 D0 E0            [24]  547 		POP ACC
+      0003CA 22               [24]  548 		RET
+                                    549 
+                                    550 
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 11.
+Hexadecimal [24-Bits]
+
+
+
+      0003CB                        551 ENABLE_STEPPER:
+      0003CB D2 8E            [12]  552 		SETB TR1
+      0003CD D2 AB            [12]  553 		SETB ET1
+      0003CF 22               [24]  554 		RET
+                                    555 
+      0003D0                        556 DISABLE_STEPPER:
+      0003D0 C2 8E            [12]  557 		CLR TR1
+      0003D2 C2 AB            [12]  558 		CLR ET1
+      0003D4 D2 95            [12]  559 		SETB AP
+      0003D6 D2 97            [12]  560 		SETB BP
+      0003D8 D2 94            [12]  561 		SETB AN
+      0003DA D2 96            [12]  562 		SETB BN
+      0003DC 22               [24]  563 		RET
+                                    564 
+                                    565 
+                                    566 
+                                    567 
+      0003DD                        568 UPDATE_SEG_DISPLAY: ; ARGS: A = content 
+      0003DD C0 E0            [24]  569 		PUSH ACC
+      0003DF C0 83            [24]  570 		PUSH DPH
+      0003E1 C0 82            [24]  571 		PUSH DPL
+      0003E3 90 05 37         [24]  572 		MOV DPTR, #SEG_TABLE
+      0003E6 93               [24]  573 		MOVC A, @A+DPTR ; load seg table
+      0003E7 F5 2F            [12]  574 		MOV SEG_PATTERN, A	; BIT ADDRESSABLE SEGMENT PATTERN
+                                    575 		; A
+      0003E9 D2 92            [12]  576 		SETB SEG_A
+      0003EB 20 7E 02         [24]  577 		JB (SEG_PATTERN-0x20)*8 + 6, 1$
+      0003EE C2 92            [12]  578 		CLR SEG_A
+      0003F0                        579 	1$: ;B
+      0003F0 D2 91            [12]  580 		SETB SEG_B
+      0003F2 20 7D 02         [24]  581 		JB (SEG_PATTERN - 0x20)*8 + 5, 2$
+      0003F5 C2 91            [12]  582 		CLR SEG_B
+      0003F7                        583 	2$:	;C
+      0003F7 D2 90            [12]  584 		SETB SEG_C
+      0003F9 20 7C 02         [24]  585 		JB (SEG_PATTERN - 0x20)*8 + 4, 3$
+      0003FC C2 90            [12]  586 		CLR SEG_C
+      0003FE                        587 	3$:	;D
+      0003FE D2 B7            [12]  588 		SETB SEG_D
+      000400 20 7B 02         [24]  589 		JB (SEG_PATTERN - 0x20)*8 + 3, 4$
+      000403 C2 B7            [12]  590 		CLR SEG_D
+      000405                        591 	4$:	;E
+      000405 D2 B4            [12]  592 		SETB SEG_E
+      000407 20 7A 02         [24]  593 		JB (SEG_PATTERN - 0x20)*8 + 2, 5$
+      00040A C2 B4            [12]  594 		CLR SEG_E
+      00040C                        595 	5$:	;F
+      00040C D2 B6            [12]  596 		SETB SEG_F
+      00040E 20 79 02         [24]  597 		JB (SEG_PATTERN - 0x20)*8 + 1, 6$
+      000411 C2 B6            [12]  598 		CLR SEG_F
+      000413                        599 	6$:	;G
+      000413 D2 B5            [12]  600 		SETB SEG_G
+      000415 20 78 02         [24]  601 		JB (SEG_PATTERN - 0x20)*8, 0$
+      000418 C2 B5            [12]  602 		CLR SEG_G
+      00041A                        603 	0$:
+      00041A D0 82            [24]  604 		POP DPL
+      00041C D0 83            [24]  605 		POP DPH
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 12.
+Hexadecimal [24-Bits]
+
+
+
+      00041E D0 E0            [24]  606 		POP ACC
+      000420 22               [24]  607 		RET
+                                    608 
+                                    609 
+      000421                        610 DISABLE_SEG_DISPLAY:
+      000421 D2 92            [12]  611 		SETB SEG_A
+      000423 D2 91            [12]  612 		SETB SEG_B
+      000425 D2 90            [12]  613 		SETB SEG_C
+      000427 D2 B7            [12]  614 		SETB SEG_D
+      000429 D2 B4            [12]  615 		SETB SEG_E
+      00042B D2 B6            [12]  616 		SETB SEG_F
+      00042D D2 B5            [12]  617 		SETB SEG_G
+      00042F 22               [24]  618 		RET
+                                    619 
+      000430                        620 POWER_DOWN:
+      000430 12 04 21         [24]  621 		LCALL DISABLE_SEG_DISPLAY
+      000433 12 03 D0         [24]  622 		LCALL DISABLE_STEPPER
+      000436 12 04 C8         [24]  623 		LCALL SAVE_DATA
+      000439 75 80 FF         [24]  624 		MOV P0, #0xff
+      00043C 75 90 FF         [24]  625 		MOV P1, #0xff
+      00043F 75 A0 FF         [24]  626 		MOV P2, #0xff
+      000442 75 B0 FF         [24]  627 		MOV P3, #0xff
+      000445 75 BB 80         [24]  628 		MOV VOCTRL, #0x80 ; using EXT0 to wake up
+      000448 D2 AF            [12]  629 		SETB EA
+      00044A D2 A8            [12]  630 		SETB EX0
+      00044C 00               [12]  631 		NOP
+      00044D 00               [12]  632 		NOP
+      00044E 43 87 02         [24]  633 		ORL PCON, #0x02 ; Set power down flag 
+      000451 00               [12]  634 		NOP
+      000452 00               [12]  635 		NOP
+      000453 C2 A8            [12]  636 		CLR EX0
+      000455 22               [24]  637 		RET
+                                    638 
+      000456                        639 INTERRUPT_KEY:
+      000456 32               [24]  640 		RETI
+                                    641 
+      000457                        642 INTERRUPT_LVD:
+      000457 12 04 63         [24]  643 		LCALL STOP_TASKS
+      00045A 74 15            [12]  644 		MOV A, #LOWVOLT_SYM
+      00045C 12 03 DD         [24]  645 		LCALL UPDATE_SEG_DISPLAY	; Display Low voltage symbol
+      00045F 53 87 DF         [24]  646 		ANL	PCON, #~LVDF
+      000462 32               [24]  647 		RETI
+                                    648 
+      000463                        649 STOP_TASKS:
+                                    650 		; stop roller
+      000463 75 79 00         [24]  651 		MOV ROLLER_CNT, #0
+      000466 75 7A 00         [24]  652 		MOV ROLLER_CNT+1, #0
+      000469 C2 CC            [12]  653 		CLR ROLLER
+                                    654 		; stop stepper
+      00046B 12 03 D0         [24]  655 		LCALL DISABLE_STEPPER
+      00046E 22               [24]  656 		RET
+                                    657 
+                                    658 ; EEPROM IAP OPERATIONS
+                           000400   659 EEPROM_START_ADDR .EQU 0x0400
+      00046F                        660 IAP_IDLE:
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 13.
+Hexadecimal [24-Bits]
+
+
+
+      00046F 75 C7 00         [24]  661             MOV     IAP_CONTR,#0                
+      000472 75 C5 00         [24]  662             MOV     IAP_CMD,#0                  
+      000475 75 C6 00         [24]  663             MOV     IAP_TRIG,#0                 
+      000478 75 C3 80         [24]  664             MOV     IAP_ADDRH,#0x80              
+      00047B 75 C4 00         [24]  665             MOV     IAP_ADDRL,#0
+      00047E 22               [24]  666             RET
+                                    667 
+      00047F                        668 IAP_READ:	
+      00047F 75 C7 84         [24]  669             MOV     IAP_CONTR,#WT_4M           
+      000482 75 C5 01         [24]  670             MOV     IAP_CMD,#1                  
+      000485 85 82 C4         [24]  671             MOV     IAP_ADDRL,DPL               
+      000488 85 83 C3         [24]  672             MOV     IAP_ADDRH,DPH               
+      00048B 75 C6 5A         [24]  673             MOV     IAP_TRIG,#0x5A               
+      00048E 75 C6 A5         [24]  674             MOV     IAP_TRIG,#0xA5              
+      000491 00               [12]  675             NOP     
+      000492 E5 C2            [12]  676             MOV     A,IAP_DATA                  
+      000494 12 04 6F         [24]  677             LCALL   IAP_IDLE                    
+      000497 22               [24]  678             RET
+                                    679 
+      000498                        680 IAP_PROGRAM: 
+      000498 75 C7 84         [24]  681             MOV     IAP_CONTR,#WT_4M           
+      00049B 75 C5 02         [24]  682             MOV     IAP_CMD,#2                  
+      00049E 85 82 C4         [24]  683             MOV     IAP_ADDRL,DPL               
+      0004A1 85 83 C3         [24]  684             MOV     IAP_ADDRH,DPH               
+      0004A4 F5 C2            [12]  685             MOV     IAP_DATA,A                  
+      0004A6 75 C6 5A         [24]  686             MOV     IAP_TRIG,#0x5A               
+      0004A9 75 C6 A5         [24]  687             MOV     IAP_TRIG,#0xA5              
+      0004AC 00               [12]  688             NOP     
+      0004AD 12 04 6F         [24]  689             LCALL   IAP_IDLE                    
+      0004B0 22               [24]  690             RET
+                                    691 
+      0004B1                        692 IAP_ERASE:
+      0004B1 75 C7 84         [24]  693             MOV     IAP_CONTR,#WT_4M           
+      0004B4 75 C5 03         [24]  694             MOV     IAP_CMD,#3                  
+      0004B7 85 82 C4         [24]  695             MOV     IAP_ADDRL,DPL               
+      0004BA 85 83 C3         [24]  696             MOV     IAP_ADDRH,DPH               
+      0004BD 75 C6 5A         [24]  697             MOV     IAP_TRIG,#0x5A               
+      0004C0 75 C6 A5         [24]  698             MOV     IAP_TRIG,#0xA5              
+      0004C3 00               [12]  699             NOP
+      0004C4 12 04 6F         [24]  700             LCALL   IAP_IDLE                    
+      0004C7 22               [24]  701             RET
+                                    702 
+      0004C8                        703 SAVE_DATA: 
+      0004C8 C2 AF            [12]  704 		CLR EA
+      0004CA C0 E0            [24]  705 		PUSH ACC
+      0004CC C0 83            [24]  706 		PUSH DPH
+      0004CE C0 82            [24]  707 		PUSH DPL
+      0004D0 C0 00            [24]  708 		PUSH 0x00
+      0004D2 75 83 04         [24]  709 		MOV DPH, #>EEPROM_START_ADDR
+      0004D5 75 82 00         [24]  710 		MOV DPL, #<EEPROM_START_ADDR
+      0004D8 12 04 B1         [24]  711 		LCALL IAP_ERASE
+      0004DB 78 60            [12]  712 		MOV R0, #0x60
+      0004DD                        713 	1$:
+      0004DD E6               [12]  714 		MOV A, @R0
+      0004DE 12 04 98         [24]  715 		LCALL IAP_PROGRAM
+ASxxxx Assembler V02.00 + NoICE + SDCC mods  (Intel 8051), page 14.
+Hexadecimal [24-Bits]
+
+
+
+      0004E1 08               [12]  716 		INC R0
+      0004E2 A3               [24]  717 		INC DPTR
+      0004E3 B8 80 F7         [24]  718 		CJNE R0, #0x80, 1$
+      0004E6 D0 00            [24]  719 		POP 0x00
+      0004E8 D0 82            [24]  720 		POP DPL
+      0004EA D0 83            [24]  721 		POP DPH
+      0004EC D0 E0            [24]  722 		POP ACC
+      0004EE D2 AF            [12]  723 		SETB EA
+      0004F0 22               [24]  724 		RET
+                                    725 
+      0004F1                        726 READ_DATA:	; Load saved variables from EEPROM
+      0004F1 C0 E0            [24]  727 		PUSH ACC
+      0004F3 C0 D0            [24]  728 		PUSH PSW
+      0004F5 C0 00            [24]  729 		PUSH 0x00	; R0
+      0004F7 C0 83            [24]  730 		PUSH DPH
+      0004F9 C0 82            [24]  731 		PUSH DPL
+      0004FB 75 D0 00         [24]  732 		MOV PSW, #0x00	; Using register set 1
+      0004FE 75 83 04         [24]  733 		MOV DPH, #>EEPROM_START_ADDR
+      000501 75 82 00         [24]  734 		MOV DPL, #<EEPROM_START_ADDR
+      000504 78 70            [12]  735 		MOV R0, #BEGIN_SAVED_VAR
+      000506                        736 	1$:
+      000506 12 04 7F         [24]  737 		LCALL IAP_READ
+      000509 F6               [12]  738 		MOV @R0, A
+      00050A A3               [24]  739 		INC DPTR
+      00050B 08               [12]  740 		INC R0
+      00050C B8 80 F7         [24]  741 		CJNE R0, #0x80, 1$
+      00050F D0 82            [24]  742 		POP DPL
+      000511 D0 83            [24]  743 		POP DPH
+      000513 D0 00            [24]  744 		POP 0x00
+      000515 D0 D0            [24]  745 		POP PSW
+      000517 D0 E0            [24]  746 		POP ACC
+      000519 22               [24]  747 		RET
+                                    748 
+      00051A 4F 4B 21 0D 00         749 STR_OK:	.strz	"OK!\r"
+      00051F 54 30 3A 0D 00         750 STR_TICK0: .strz "T0:\r"
+      000524 54 31 3A 0D 00         751 STR_TICK1: .strz "T1:\r"
+      000529 42 41 44 20 43 4F 4D   752 STR_BADCOMM:	.strz	"BAD COMMAND!\r"
+             4D 41 4E 44 21 0D 00
+      000537                        753 SEG_TABLE:	; Common anode 7-segment table 
+      000537 01 4F 12 06 4C 24 20   754 		.db 0x01, 0x4f, 0x12, 0x06, 0x4c, 0x24, 0x20, 0x0f, 0x00, 0x04 ;0-9
+             0F 00 04
+      000541 08 60 72 42 30 38 21   755 		.db 0x08, 0x60, 0x72, 0x42, 0x30, 0x38, 0x21, 0x48, 0x79, 0x47 ;a-j
+             48 79 47
+      00054B 58 71                  756 		.db 0x58, 0x71													;K,L
+                           000015   757 LOWVOLT_SYM .EQU 21
+                           000005   758 LEN_KEYOP .EQU 5
+                           000003   759 N_KEYOPS .EQU 3
+      00054D                        760 KEYOP_TABLE:
+      00054D 01 00 00 00 00         761 		.db 1, 0, 0, 0, 0 ; . Show counter
+      000552 02 00 00 00 00         762 		.db 2, 0, 0, 0, 0 ; - Print
+      000557 02 01 02 01 00         763 		.db 2, 1, 2, 1, 0 ; -.-. C Clear counter
+      00055C                        764 OP_ENT_PNTS:
+      00055C 02 78 02 80 02 A4      765 		.dw KEYOP0, KEYOP1, KEYOP2 ; function table for key operation handlers
